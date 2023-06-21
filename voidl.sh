@@ -1,71 +1,69 @@
+#!/usr/bin/env python3
+
 import os
-import requests
-import tarfile
 import subprocess
-import psutil
-from tqdm import tqdm
+import requests
 
+# Constants
 IMAGE_URL = "https://repo-default.voidlinux.org/live/current/void-live-x86_64-musl-20221001-xfce.iso"
+IMAGE_NAME = "void-live-x86_64-musl-20221001-xfce.iso"
+MOUNT_POINT_ISO = "/mnt/iso"
+MOUNT_POINT_TARGET = "/mnt/target"
 
-def download_file(url):
-    local_filename = url.split('/')[-1]
-    if os.path.exists(local_filename):
-        print(f"File {local_filename} already exists, skipping download.")
-        return local_filename
+# Check if the image is already downloaded
+def check_existing_image():
+    return os.path.isfile(IMAGE_NAME)
 
-    response = requests.get(url, stream=True)
-    total = int(response.headers.get('content-length', 0))
-    
-    with open(local_filename, 'wb') as f, tqdm(
-            desc=local_filename,
-            total=total,
-            unit='iB',
-            unit_scale=True,
-            unit_divisor=1024,
-        ) as bar:
-        for data in response.iter_content(chunk_size=1024):
-            size = f.write(data)
-            bar.update(size)
-    return local_filename
+# Download the Void Linux ISO
+def download_image():
+    print("Downloading Void Linux ISO...")
+    response = requests.get(IMAGE_URL, stream=True)
+    response.raise_for_status()
+    with open(IMAGE_NAME, 'wb') as fd:
+        for chunk in response.iter_content(chunk_size=1024*1024):
+            fd.write(chunk)
+    print("Download completed.")
 
-def extract_to_drive(file_path, destination_drive):
-    with tarfile.open(file_path) as tf:
-        tf.extractall(path=destination_drive)
+# Mount the ISO
+def mount_iso():
+    os.makedirs(MOUNT_POINT_ISO, exist_ok=True)
+    subprocess.run(["mount", "-o", "loop", IMAGE_NAME, MOUNT_POINT_ISO], check=True)
 
+# Unmount the ISO
+def unmount_iso():
+    subprocess.run(["umount", MOUNT_POINT_ISO], check=True)
+
+# Copy contents of the ISO to the target drive
+def copy_to_drive(destination_drive):
+    print(f"Copying contents to {destination_drive}...")
+    subprocess.run(["cp", "-a", MOUNT_POINT_ISO + "/*", destination_drive], check=True)
+    print(f"Copying completed to {destination_drive}.")
+
+# Install GRUB and make the drive bootable
 def install_grub(destination_drive):
-    subprocess.run(["grub-install", "--root-directory=/mnt", destination_drive], check=True)
+    print("Making the drive bootable...")
+    os.makedirs(MOUNT_POINT_TARGET, exist_ok=True)
+    subprocess.run(["mount", destination_drive + "1", MOUNT_POINT_TARGET], check=True)
+    subprocess.run(["chroot", MOUNT_POINT_TARGET], check=True)
+    subprocess.run(["grub-install", destination_drive], check=True)
+    subprocess.run(["update-grub"], check=True)
+    subprocess.run(["exit"], check=True)
+    subprocess.run(["umount", MOUNT_POINT_TARGET], check=True)
+    print("The drive is now bootable.")
 
-def list_drives():
-    result = subprocess.run(["lsblk", "-dpnlo", "NAME"], stdout=subprocess.PIPE, text=True)
-    drives = result.stdout.splitlines()
-    for i, drive in enumerate(drives):
-        print(f"{i+1}. {drive}")
-    return drives
-
-def select_drive(drives):
-    while True:
-        choice = input("Select the drive number where you want to install the Linux distribution: ")
-        if choice.isdigit() and 1 <= int(choice) <= len(drives):
-            return drives[int(choice) - 1]
-        else:
-            print("Invalid choice. Please enter a number from the list.")
-
-# Main script
 def main():
-    print("Downloading Void Linux XFCE musl live image...")
-    image_path = download_file(IMAGE_URL)
+    # Check if the image is already downloaded
+    if not check_existing_image():
+        download_image()
 
-    print("Available drives:")
-    drives = list_drives()
-    destination_drive = select_drive(drives)
+    # Prompt the user to enter the destination drive
+    destination_drive = input("Please enter the destination drive (e.g., /dev/sdX): ")
     
-    print(f"Extracting image to {destination_drive}...")
-    extract_to_drive(image_path, destination_drive)
-    
-    print("Installing GRUB...")
+    # Mount the ISO, copy its contents to the target drive, make it bootable, and unmount the ISO
+    mount_iso()
+    copy_to_drive(destination_drive)
     install_grub(destination_drive)
-
-    print("Done!")
+    unmount_iso()
 
 if __name__ == "__main__":
     main()

@@ -36,7 +36,8 @@ def install_grub(destination_drive):
     subprocess.run(["grub-install", "--root-directory=/mnt", destination_drive], check=True)
 
 def list_drives():
-    drives = [partition.device for partition in psutil.disk_partitions() if 'rw' in partition.opts]
+    result = subprocess.run(["lsblk", "-dpnlo", "NAME"], stdout=subprocess.PIPE, text=True)
+    drives = result.stdout.splitlines()
     for i, drive in enumerate(drives):
         print(f"{i+1}. {drive}")
     return drives
